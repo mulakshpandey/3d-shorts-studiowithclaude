@@ -41,7 +41,7 @@ RENDER_DIR = os.path.join(ROOT, "renders")
 CHAR_FIRST = os.path.join(ROOT, "character_2d", "frames", "char_0001.png")
 
 W, H, FPS, FRAME_END = 1080, 1920, 30, 450
-SAMPLES = 64
+SAMPLES = 24
 random.seed(7)
 
 
@@ -170,7 +170,10 @@ def setup_render(device):
     s.frame_end = FRAME_END
     s.render.image_settings.file_format = "PNG"
     s.render.image_settings.color_mode = "RGB"
-    s.render.filepath = os.path.join(RENDER_DIR, "frame_####")
+    s.frame_step = 1
+    s.render.filepath = os.path.abspath("./renders/frame_")     # explicit, cwd-independent
+    s.render.use_file_extension = True
+    print("[render] output dir:", os.path.abspath("./renders"), flush=True)
     c = s.cycles
     c.device = "GPU" if device != "CPU" else "CPU"
     c.samples = SAMPLES
@@ -178,6 +181,9 @@ def setup_render(device):
     c.denoiser = "OPENIMAGEDENOISE"
     c.use_adaptive_sampling = True
     c.use_fast_gi = False
+    c.adaptive_threshold = 0.05
+    c.max_bounces = 4
+    c.use_denoising = True
     s.view_settings.view_transform = "AgX"
     s.view_settings.look = "AgX - Medium High Contrast"
     return s
@@ -193,10 +199,21 @@ def build_world():
     bg = n["Background"]
     bg.inputs["Color"].default_value = (0.012, 0.016, 0.022, 1)
     bg.inputs["Strength"].default_value = 0.6
-    vol = n.new("ShaderNodeVolumeScatter")                 # faint fog scatter
-    vol.inputs["Density"].default_value = 0.012
-    vol.inputs["Color"].default_value = (0.55, 0.75, 0.95, 1)
-    l.new(vol.outputs["Volume"], n["World Output"].inputs["Volume"])
+    # no world volume (Volume Scatter was the slow part); haze comes from cheap spotlights in build_haze_lights()
+
+
+def build_haze_lights():
+    """Two low-energy spotlights that give the same blue haze look for almost no render cost."""
+    for i, (loc, col) in enumerate([((-2.5, -3.0, 4.0), (0.55, 0.75, 0.95)), ((2.5, -3.0, 4.0), (0.6, 0.8, 1.0))]):
+        ld = bpy.data.lights.new(f"Haze_{i}", type="SPOT")
+        ld.energy = 900.0
+        ld.color = col
+        ld.spot_size = math.radians(60)
+        ld.spot_blend = 0.9
+        ob = bpy.data.objects.new(f"Haze_{i}", ld)
+        bpy.context.collection.objects.link(ob)
+        ob.location = loc
+        ob.rotation_euler = (math.radians(60), 0, math.radians(180 if i == 0 else 180))
 
 
 def build_room():
@@ -487,6 +504,7 @@ def bake_physics():
     try:
         bpy.ops.ptcache.bake_all(bake=True)
         print("[bake] bake_all done")
+        print("Physics bake complete!", flush=True)
     except Exception as e:
         print(f"[bake] bake_all failed ({e}); stepping frames to fill the cache")
         for f in range(1, FRAME_END + 1):
@@ -526,6 +544,8 @@ def main():
     rw = s.rigidbody_world
     rw.point_cache.frame_start = 1
     rw.point_cache.frame_end = FRAME_END
+    rw.substeps_per_frame = 5          # was default 10: faster bake, same contact behaviour checked by --sim-check
+    rw.solver_iterations = 5
 
     build_world()
     build_room()
@@ -534,6 +554,7 @@ def main():
     facts, jammed = build_foreground_physics(gate)
     build_background_physics()
     build_lights()
+    build_haze_lights()
     target = bpy.data.objects.new("CamTarget", None)
     bpy.context.collection.objects.link(target)
     target.location = (0.4, 0.0, 1.2)
@@ -550,9 +571,15 @@ def main():
         return
 
     bake_physics()
-    print("[render] starting", FRAME_END, "frames at", W, "x", H)
+
+    def _progress(scene, *_):
+        print(f"Rendered frame {scene.frame_current}/{FRAME_END}", flush=True)
+    bpy.app.handlers.render_post.append(_progress)
+
+    s.frame_start, s.frame_end, s.frame_step = 1, FRAME_END, 1
+    print("[render] starting", FRAME_END, "frames at", W, "x", H, "->", os.path.abspath("./renders"), flush=True)
     bpy.ops.render.render(animation=True)
-    print("[render] done ->", RENDER_DIR)
+    print("[render] done ->", os.path.abspath("./renders"), flush=True)
 
 
 if __name__ == "__main__":
