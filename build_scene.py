@@ -232,7 +232,7 @@ def build_hopper():
         wall.rotation_mode = "QUATERNION"
         wall.rotation_quaternion = Matrix((tang, ydir, zdir)).transposed().to_quaternion()
         circ = 2 * math.pi * r_m / N
-        wall.scale = (circ * 1.25, 0.02, slant * 1.05)
+        wall.scale = (circ * 1.25, 0.02, slant * 1.0)   # exact length: no lip poking into the outlet
         wall.hide_render = True                                   # invisible collider
         wall.hide_viewport = False
         rigid(wall, kind="PASSIVE", shape="BOX", friction=0.4, bounce=0.2)
@@ -244,10 +244,14 @@ def build_hopper():
 
     gate = add_mesh("cube", "Gate", location=(0, 0, 1.9), scale=(0.42, 0.42, 0.025))
     gate.data.materials.append(mat("GateSteel", (0.5, 0.52, 0.55, 1), rough=0.3, metal=1.0))
-    rigid(gate, kind="PASSIVE", shape="BOX", friction=0.6)
+    # kinematic active body: Blender syncs its keyframed slide into the physics world
+    # (a passive body kept its original footprint in the solver and held the facts up)
+    rigid(gate, kind="ACTIVE", shape="BOX", friction=0.6, mass=1.0)
+    gate.rigid_body.kinematic = True
+    gate.rigid_body.keyframe_insert("kinematic", frame=1)
     keyframe_all(gate, 1, loc=(0, 0, 1.9))
     keyframe_all(gate, 119, loc=(0, 0, 1.9))
-    keyframe_all(gate, 130, loc=(0.6, 0, 1.9))              # slides open at frame 120
+    keyframe_all(gate, 130, loc=(1.0, 0, 1.9))              # slides clear of the outlet (edge at x=0.58 > 0.41)
     return gate
 
 
@@ -307,6 +311,7 @@ def build_foreground_physics(gate):
         sph = add_mesh("uv_sphere", f"Fact_{i:02d}", location=p, radius=0.06, segments=16, ring_count=8)
         sph.data.materials.append(mat("FactCyan", (0.1, 0.8, 1.0, 1), rough=0.1, emit=(0.1, 0.8, 1.0, 1), emit_str=4.0))
         rigid(sph, shape="SPHERE", mass=0.05, friction=0.4, bounce=0.5)
+        sph.rigid_body.use_deactivation = False      # settled spheres must wake when the gate opens
         facts.append(sph)
 
     cubes = []
@@ -315,6 +320,7 @@ def build_foreground_physics(gate):
         cb = add_mesh("cube", f"Guess_{i}", location=p, scale=(0.05, 0.05, 0.05))
         cb.data.materials.append(mat("GuessCrimson", (0.9, 0.05, 0.05, 1), rough=0.2, emit=(1.0, 0.05, 0.05, 1), emit_str=3.0))
         rigid(cb, shape="BOX", mass=0.15, friction=0.5, bounce=0.2)
+        cb.rigid_body.use_deactivation = False
         cubes.append(cb)
 
     # everything in the hopper is held still (kinematic) until the gate opens at frame 120, then released.
@@ -335,7 +341,7 @@ def build_foreground_physics(gate):
     fe.field.falloff_type = "SPHERE"
     fe.field.falloff_power = 0.0
     fe.field.keyframe_insert("strength", frame=279)
-    fe.field.strength = 160.0
+    fe.field.strength = 500.0
     fe.field.keyframe_insert("strength", frame=280)
     fe.field.strength = 0.0
     fe.field.keyframe_insert("strength", frame=284)
