@@ -1,0 +1,5 @@
+__pycache__/
+renders/
+character_2d/frames/
+*.blend
+*.blend1
